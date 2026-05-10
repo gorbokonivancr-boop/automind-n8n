@@ -1,0 +1,324 @@
+{
+  "name": "AutoMind Universal AI Assistant — Telegram + OpenRouter",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "7b9b2c5d-telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -900,
+        0
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Telegram Bot API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst msg = raw.message || raw.edited_message || raw.channel_post || {};\nconst chatId = msg.chat?.id;\nconst userId = msg.from?.id;\nconst userName = [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(' ') || msg.from?.username || 'unknown';\nconst text = (msg.text || msg.caption || '').trim();\nconst ownerId = Number($env.OWNER_TELEGRAM_ID || '8134595837');\nif (!chatId || !userId) return [];\nreturn [{\n  json: {\n    chatId,\n    userId,\n    userName,\n    text,\n    authorized: Number(userId) === ownerId,\n    isReset: /^\\/reset\\b/i.test(text),\n    receivedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "normalize-input",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "owner-check",
+              "leftValue": "={{ $json.authorized }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "owner-gate",
+      "name": "Owner Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -460,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "reset-check",
+              "leftValue": "={{ $json.isReset }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "reset-gate",
+      "name": "Reset Gate",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -220,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.memory ||= {};\ndelete staticData.memory[String(item.userId)];\nreturn [{ json: { chatId: item.chatId, answer: 'Память очищена. Погнали заново.' } }];"
+      },
+      "id": "reset-memory",
+      "name": "Reset Memory",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20,
+        -260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst text = item.text || '';\nconst lower = text.toLowerCase();\nconst env = (name, fallback) => $env[name] || fallback;\nconst models = {\n  fast: env('OPENROUTER_MODEL_FAST', 'deepseek/deepseek-chat'),\n  pro: env('OPENROUTER_MODEL_PRO', 'deepseek/deepseek-chat'),\n  reasoning: env('OPENROUTER_MODEL_REASONING', 'deepseek/deepseek-r1'),\n  coder: env('OPENROUTER_MODEL_CODER', 'deepseek/deepseek-coder'),\n  fallback: env('OPENROUTER_MODEL_FALLBACK', 'deepseek/deepseek-chat')\n};\nlet mode = 'automind_pro';\nlet model = models.pro;\nlet temperature = 0.35;\nlet max_tokens = 2200;\nconst techWords = ['код', 'n8n', 'api', 'json', 'debug', 'ошибка', 'workflow', 'воркфлоу', 'docker', 'сервер', 'бот сломался', 'интеграция'];\nconst salesWords = ['продажи', 'скрипт', 'возражение', 'лид', 'клиент', 'демо', 'предоплата', 'кп', 'партнер', 'партнёр', 'оффер'];\nconst hardWords = ['стратегия', 'план', 'архитектура', 'финансы', 'найм', 'юрид', 'риски', '20 млн', 'масштаб', 'инвестиции', 'автопилот'];\nconst riskWords = ['договор', 'налог', 'ип', 'самозанят', '152-фз', 'безопасность', 'пароль', 'доступ', 'бэкап', 'репутация'];\nif (/^\\/(fast|flash)\\b/i.test(text) || (text.length < 140 && !hardWords.some(w => lower.includes(w)))) {\n  mode = 'fast';\n  model = models.fast;\n  temperature = 0.25;\n  max_tokens = 1000;\n}\nif (/^\\/(tech|code|n8n)\\b/i.test(text) || techWords.some(w => lower.includes(w))) {\n  mode = 'tech_builder';\n  model = models.coder;\n  temperature = 0.2;\n  max_tokens = 2800;\n}\nif (/^\\/(pro|deep|deepseek|think|plan)\\b/i.test(text) || hardWords.some(w => lower.includes(w))) {\n  mode = 'deep_strategy';\n  model = models.reasoning;\n  temperature = 0.3;\n  max_tokens = 3600;\n}\nif (/^\\/(sales|money)\\b/i.test(text) || salesWords.some(w => lower.includes(w))) {\n  mode = 'sales_money';\n  model = models.pro;\n  temperature = 0.35;\n  max_tokens = 2400;\n}\nif (/^\\/(risk|legal|safe)\\b/i.test(text) || riskWords.some(w => lower.includes(w))) {\n  mode = 'risk_control';\n  model = models.reasoning;\n  temperature = 0.25;\n  max_tokens = 2600;\n}\nconst cleanText = text.replace(/^\\/(fast|flash|tech|code|n8n|pro|deep|deepseek|think|plan|sales|money|risk|legal|safe)\\s*/i, '').trim() || text;\nconst systemPrompt = `Ты — личный AI-ассистент Ивана: старший кент-наставник. Ты старше, спокойнее и опытнее. Говоришь по-русски живо, прямо, понятно, без канцелярита, без воды и без кринжа.\n\nГлавное: помогай Ивану выигрывать в реальных задачах: AutoMind, продажи, найм, n8n, Telegram-боты, сайты, AI, деньги, юридические риски, здоровье, учёба, команда и переговоры. Думай как топ-1% спец в нужной сфере, но объясняй простым языком.\n\nAutoMind: система заявок для МСБ: сайт/лендинг → Telegram-бот → CRM → напоминания → аналитика → AI → поддержка. Бот как модуль до 50к. Большой чек через систему заявок 120–300к+ и поддержку 10–30к/мес. Цель агрессивная: идти к 20 млн ₽/мес через Revenue OS, Partner Engine, Demo Factory, Deal Desk, Delivery OS, Support Desk, Risk & Control OS, команду и автоматизации.\n\nПравила:\n1. Сначала главный вывод в 1–3 строках.\n2. Потом конкретный план, таблица или чеклист.\n3. В конце — самый первый шаг.\n4. Отделяй факты от предположений. Если не уверен — скажи, что надо проверить.\n5. Не обещай гарантий и не выдумывай цифры/кейсы. Давай вилки, условия и риски.\n6. Сначала деньги, продажи, снижение рутины и рисков; потом красота.\n7. Если идея опасная — скажи прямо и дай безопасную альтернативу.\n8. Не советуй серый спам, обход банов, незаконные схемы, хранение секретов в чатах, обман клиентов или фейковые кейсы.\n9. По налогам/договорам/несовершеннолетию/152-ФЗ — дай чеклист и напомни проверить со взрослым, юристом или бухгалтером.\n10. Если задача большая — разбей на сейчас / сегодня / 3 дня / 7 дней / месяц.\n\nРежимы: fast — коротко; sales_money — продажи; tech_builder — n8n/API/код; deep_strategy — стратегия/найм/финансы; risk_control — юридика/безопасность/репутация; life_coach — дисциплина/энергия.\n\nСтиль: свой человек, но умный и жёсткий к реальности. Не сюсюкай. Держи фокус на результате.`;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.memory ||= {};\nconst key = String(item.userId);\nconst memory = staticData.memory[key] || [];\nconst userContent = `Режим: ${mode}\\nМодель: ${model}\\nВремя: ${item.receivedAt}\\n\\nЗадача от Ивана:\\n${cleanText}`;\nconst messages = [\n  { role: 'system', content: systemPrompt },\n  ...memory.slice(-8),\n  { role: 'user', content: userContent }\n];\nreturn [{\n  json: {\n    ...item,\n    mode,\n    model,\n    fallbackModel: models.fallback,\n    cleanText,\n    temperature,\n    max_tokens,\n    messages,\n    openRouterBody: { model, messages, temperature, max_tokens }\n  }\n}];"
+      },
+      "id": "build-openrouter-request",
+      "name": "Build OpenRouter Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        20,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $input.first().json;\nconst apiKey = $env.OPENROUTER_API_KEY;\nif (!apiKey) {\n  throw new Error('OPENROUTER_API_KEY is not set');\n}\nconst url = 'https://openrouter.ai/api/v1/chat/completions';\nconst timeoutMs = Number($env.OPENROUTER_TIMEOUT_MS || 15000);\nconst maxAttempts = Number($env.OPENROUTER_MAX_ATTEMPTS || 3);\nconst sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));\nasync function callOpenRouter(body, attempt) {\n  const controller = new AbortController();\n  const timer = setTimeout(() => controller.abort(), timeoutMs);\n  try {\n    const res = await fetch(url, {\n      method: 'POST',\n      headers: {\n        Authorization: `Bearer ${apiKey}`,\n        'Content-Type': 'application/json',\n        'HTTP-Referer': $env.OPENROUTER_SITE_URL || 'https://automind.local',\n        'X-Title': 'AutoMind Universal AI Assistant'\n      },\n      body: JSON.stringify(body),\n      signal: controller.signal\n    });\n    const raw = await res.text();\n    let parsed;\n    try { parsed = raw ? JSON.parse(raw) : {}; } catch (e) { parsed = { raw }; }\n    if (!res.ok) {\n      const msg = parsed?.error?.message || parsed?.message || raw || `HTTP ${res.status}`;\n      const err = new Error(msg);\n      err.status = res.status;\n      err.payload = parsed;\n      throw err;\n    }\n    return parsed;\n  } finally {\n    clearTimeout(timer);\n  }\n}\nlet lastError = null;\nlet usedModel = context.model;\nlet response = null;\nfor (let attempt = 1; attempt <= maxAttempts; attempt++) {\n  const useFallback = attempt === maxAttempts && context.fallbackModel && context.fallbackModel !== context.model;\n  usedModel = useFallback ? context.fallbackModel : context.model;\n  const body = { ...context.openRouterBody, model: usedModel };\n  try {\n    response = await callOpenRouter(body, attempt);\n    const answer = response?.choices?.[0]?.message?.content;\n    if (answer && String(answer).trim()) {\n      return [{ json: { ...context, openRouterResponse: response, attempts: attempt, usedModel, fallbackUsed: useFallback } }];\n    }\n    lastError = new Error('Empty answer from OpenRouter');\n  } catch (error) {\n    lastError = error;\n    if (attempt < maxAttempts) {\n      await sleep(1500 * attempt);\n    }\n  }\n}\nreturn [{\n  json: {\n    ...context,\n    openRouterResponse: null,\n    attempts: maxAttempts,\n    usedModel,\n    fallbackUsed: usedModel !== context.model,\n    openRouterError: lastError?.message || 'Unknown OpenRouter error',\n    openRouterStatus: lastError?.status || null\n  }\n}];"
+      },
+      "id": "openrouter-chat",
+      "name": "OpenRouter Retry",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        270,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $input.first().json;\nconst data = context.openRouterResponse;\nlet answer = data?.choices?.[0]?.message?.content || '';\nif (!answer) {\n  answer = `OpenRouter не ответил нормально. Ошибка: ${context.openRouterError || 'пустой ответ'}.\\n\\nПервый шаг: проверь OPENROUTER_API_KEY, model id и баланс OpenRouter.`;\n}\nanswer = String(answer).trim();\nconst warnings = [];\nif (/\\b(гарантированно|точно будет|100%|без риска|железно)\\b/i.test(answer)) {\n  warnings.push('в ответе есть слишком жёсткая гарантия — проверь условия');\n}\nif (/(50\\+\\s*(клиент|салон|проект)|уже подключено\\s*50)/i.test(answer)) {\n  warnings.push('соцдоказательство 50+ нельзя использовать без факта');\n}\nif (/(20\\s*млн|миллион)/i.test(answer) && !/(если|при услов|вилка|риск|примерно|может|агрессив)/i.test(answer)) {\n  warnings.push('финансовую цифру лучше считать как сценарий, а не обещание');\n}\nif (warnings.length) {\n  answer += `\\n\\nПроверка реальности: ${warnings.join('; ')}.`;\n}\nconst usage = data?.usage || {};\nconst totalTokens = Number(usage.total_tokens || 0);\nconst costPer1k = Number($env.OPENROUTER_COST_PER_1K_TOKENS || 0);\nconst estimatedCost = costPer1k && totalTokens ? Number(((totalTokens / 1000) * costPer1k).toFixed(6)) : 0;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.memory ||= {};\nstaticData.usageLogs ||= [];\nconst key = String(context.userId);\nconst old = staticData.memory[key] || [];\nstaticData.memory[key] = [\n  ...old,\n  { role: 'user', content: context.cleanText || context.text },\n  { role: 'assistant', content: answer }\n].slice(-10);\nstaticData.usageLogs.push({\n  ts: new Date().toISOString(),\n  userId: context.userId,\n  mode: context.mode,\n  model: context.usedModel || context.model,\n  attempts: context.attempts,\n  fallbackUsed: context.fallbackUsed,\n  totalTokens,\n  estimatedCost\n});\nstaticData.usageLogs = staticData.usageLogs.slice(-200);\nconst meta = `\\n\\n_режим: ${context.mode} · модель: ${context.usedModel || context.model} · попытки: ${context.attempts || 1}${context.fallbackUsed ? ' · fallback' : ''}${totalTokens ? ` · tokens: ${totalTokens}` : ''}_`;\nconst finalAnswer = answer + meta;\nconst chunks = [];\nfor (let i = 0; i < finalAnswer.length; i += 3800) chunks.push(finalAnswer.slice(i, i + 3800));\nreturn chunks.map((chunk, index) => ({\n  json: {\n    chatId: context.chatId,\n    answer: chunk,\n    mode: context.mode,\n    model: context.usedModel || context.model,\n    part: index + 1,\n    total: chunks.length\n  }\n}));"
+      },
+      "id": "parse-openrouter-response",
+      "name": "Parse OpenRouter Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.answer }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-answer",
+      "name": "Send Answer",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        790,
+        -130
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Telegram Bot API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chatId }}",
+        "text": "Нет доступа. Этот ассистент работает только для владельца.",
+        "additionalFields": {}
+      },
+      "id": "send-unauthorized",
+      "name": "Send Unauthorized",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -220,
+        180
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Telegram Bot API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Owner Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Owner Gate": {
+      "main": [
+        [
+          {
+            "node": "Reset Gate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Unauthorized",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reset Gate": {
+      "main": [
+        [
+          {
+            "node": "Reset Memory",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build OpenRouter Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reset Memory": {
+      "main": [
+        [
+          {
+            "node": "Send Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build OpenRouter Request": {
+      "main": [
+        [
+          {
+            "node": "OpenRouter Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse OpenRouter Response": {
+      "main": [
+        [
+          {
+            "node": "Send Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Retry": {
+      "main": [
+        [
+          {
+            "node": "Parse OpenRouter Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2026-05-07T00:00:00.000Z",
+      "updatedAt": "2026-05-07T00:00:00.000Z",
+      "id": "automind",
+      "name": "AutoMind"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2026-05-07T00:00:00.000Z",
+  "versionId": "automind-universal-ai-assistant-v1"
+}
