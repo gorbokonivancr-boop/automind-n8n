@@ -1,0 +1,600 @@
+Дерево папок
+
+Полный код parser_final_fixed.py
+
+Файл .env с пояснениями
+
+daily_fresh.sh
+
+cleanup_logs.sh
+
+Crontab
+
+Инструкцию по управлению (базовую, которую можно допилить)
+
+text
+/opt/hh-parser/
+├── venv/                    # виртуальное окружение Python
+├── .env                     # настройки (ключи, параметры поиска)
+├── service_account.json     # ключ Google Sheets
+├── parser_final_fixed.py    # основной скрипт парсера
+├── daily_fresh.sh           # скрипт ежедневного среза
+├── cleanup_logs.sh          # очистка старых логов
+├── main_contacts.log        # лог основного сборщика
+├── fresh_YYYY-MM-DD.log     # логи ежедневных срезов
+├── parser_main.pid          # PID основного процесса
+├── parser_fresh.pid         # PID ежедневного процесса
+└── old_scripts_backup/      # бэкап старых версий
+1. .env – настройки
+ini
+# Google Sheets
+GOOGLE_SHEET_ID=1zknVZMtz2osTrEoVbQDN1jWyVQSPybVE54FNlTlVhIY
+GOOGLE_SHEET_TAB=Контакты
+GOOGLE_SA_JSON=/opt/hh-parser/service_account.json
+
+# HH API (основной сбор)
+HH_CLIENT_ID=TTGUTTHBB3...     # заменить на реальный
+HH_CLIENT_SECRET=VBU7ITIU3D... # заменить на реальный
+
+# HH API (ежедневный срез)
+HH_CLIENT_ID_DAILY=MG2MICKTF4...
+HH_CLIENT_SECRET_DAILY=OT07IO8OEJ...
+
+# OpenRouter (не обязателен)
+OPENROUTER_API_KEY=sk-or-...   # можно оставить пустым
+OPENROUTER_MODEL=openai/gpt-4o-mini
+
+# Поиск
+HH_JOB_QUERIES="Бизнес-ассистент|Личный ассистент|Помощник руководителя|Офис-менеджер|Финансовый менеджер|Специалист по документообороту|Логист|Менеджер по закупкам|Дизайнер|Графический дизайнер|Веб-дизайнер|UX/UI дизайнер|Менеджер по работе с клиентами|Администратор магазина|Руководитель проектов|Project manager|Маркетолог|HR-менеджер|рекрутер|Контент-менеджер|копирайтер"
+HH_SEARCH_PERIOD_DAYS=10
+HH_TARGET_CONTACTS=5000
+HH_MAX_SEARCH_PAGES=30
+HH_PER_PAGE=50
+HH_PAUSE_SECONDS=1.5
+HH_AREA_IDS=113
+REMOTE_ONLY=1
+HH_WRITE_EMPTY=0
+MAX_SITE_PAGES_PER_COMPANY=10
+2. parser_final_fixed.py – основной скрипт
+python
+#!/usr/bin/env python3
+import argparse, json, os, re, sys, time, random
+from datetime import datetime
+from html import unescape
+from pathlib import Path
+from urllib.parse import urljoin, urlparse
+
+import gspread, requests
+from google.oauth2.service_account import Credentials
+
+# Загрузка .env
+def load_env(path=".env"):
+    env_path = Path(path)
+    if not env_path.exists():
+        env_path = Path("/opt/hh-parser/.env")
+    if not env_path.exists():
+        return
+    for raw in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+load_env()
+
+# Конфигурация
+SPREADSHEET_ID = os.getenv("GOOGLE_SHEET_ID", "1zknVZMtz2osTrEoVbQDN1jWyVQSPybVE54FNlTlVhIY")
+SHEET_TAB = os.getenv("GOOGLE_SHEET_TAB", "Контакты")
+SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SA_JSON", "/opt/hh-parser/service_account.json")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+HH_CLIENT_ID = os.getenv("HH_CLIENT_ID", "")
+HH_CLIENT_SECRET = os.getenv("HH_CLIENT_SECRET", "")
+TARGET = int(os.getenv("HH_TARGET_CONTACTS", "5000"))
+PER_PAGE = min(int(os.getenv("HH_PER_PAGE", "50")), 100)
+MAX_PAGES = int(os.getenv("HH_MAX_SEARCH_PAGES", "30"))
+SEARCH_PERIOD = int(os.getenv("HH_SEARCH_PERIOD_DAYS", "10"))
+REMOTE_ONLY = os.getenv("REMOTE_ONLY", "1") == "1"
+WRITE_EMPTY = os.getenv("HH_WRITE_EMPTY", "0") == "1"
+PAUSE = float(os.getenv("HH_PAUSE_SECONDS", "1.5"))
+MAX_SITE_PAGES = int(os.getenv("MAX_SITE_PAGES_PER_COMPANY", "10"))
+AREA_IDS = [a.strip() for a in os.getenv("HH_AREA_IDS", "113").split(",") if a.strip()]
+JOBS = [q.strip() for q in os.getenv("HH_JOB_QUERIES", "").replace('"', "").split("|") if q.strip()] or [
+    "Бизнес-ассистент", "Личный ассистент", "Помощник руководителя", "Офис-менеджер",
+    "Финансовый менеджер", "Специалист по документообороту", "Логист", "Менеджер по закупкам",
+    "Дизайнер", "Графический дизайнер", "Веб-дизайнер", "UX/UI дизайнер",
+    "Менеджер по работе с клиентами", "Администратор магазина", "Руководитель проектов",
+    "Project manager", "Маркетолог", "HR-менеджер", "рекрутер", "Контент-менеджер", "копирайтер"
+]
+
+HEADERS = ["Дата","Компания","Вакансия","Город","Телефон","Email","Сайт","Соцсети","ИНН","Тип",
+           "Зарплата","Опыт","График","Тип занятости","Ссылка HH","Источник"]
+
+# Регулярки
+PHONE_RE = re.compile(r"(?:\+7|8)\s*\(?[3489]\d{2}\)?\s*\d{3}[\s\-]?\d{2}[\s\-]?\d{2}")
+EMAIL_RE = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.IGNORECASE)
+TG_RE = re.compile(r"(?:https?://)?(?:www\.)?(?:t\.me|telegram\.me)/(\w+)", re.IGNORECASE)
+WA_RE = re.compile(r"(?:https?://)?(?:wa\.me|api\.whatsapp\.com)/?(?:\+)?(\d{10,11})", re.IGNORECASE)
+SOCIAL_RE = re.compile(r"https?://(?:www\.)?(?:vk\.com|t\.me|telegram\.me|instagram\.com|ok\.ru|youtube\.com|facebook\.com|wa\.me|vb\.me|viber\.me)/[^\s\"'<>]+", re.IGNORECASE)
+INN_CONTEXT_RE = re.compile(r"(?:ИНН|инн|inn|INN)\s*[:=]?\s*(\d{10}|\d{12})", re.IGNORECASE)
+INN_FOOTER_RE = re.compile(r"(?:©|copyright|все права защищены|ОГРН|КПП).{0,100}(\d{10}|\d{12})", re.IGNORECASE)
+INN_ANY_RE = re.compile(r"\b(\d{10}|\d{12})\b")
+SCRIPT_STYLE_RE = re.compile(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>", re.IGNORECASE)
+TAG_RE = re.compile(r"<[^>]+>")
+LINK_RE = re.compile(r"href=[\"']([^\"'#]+)[\"']", re.IGNORECASE)
+CONTACT_HINT_RE = re.compile(r"contact|kontak|контакт|rekviz|реквиз|about|о-комп", re.IGNORECASE)
+
+SESSION = requests.Session()
+SESSION.headers.update({
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/122 Safari/537.36 hh-contact-parser/3.0",
+    "Accept": "application/json,text/html,*/*",
+})
+
+def log(msg):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+# Валидные коды РФ
+VALID_CODES = [
+    '900','901','902','903','904','905','906','908','909','910','911','912','913','914','915','916','917','918','919',
+    '920','921','922','923','924','925','926','927','928','929','930','931','932','933','934','936','937','938','939',
+    '940','941','942','943','944','945','946','947','948','949','950','951','952','953','954','955','956','957','958',
+    '960','961','962','963','964','965','966','967','968','969','970','971','972','973','974','975','976','977','978',
+    '980','981','982','983','984','985','986','987','988','989','991','992','993','994','995','996','997','998','999',
+    '301','302','336','341','342','343','345','346','347','349','351','352','353','365','381','382','383','384','385',
+    '388','390','391','394','395','401','411','413','415','416','421','423','424','426','427','471','472','473','474',
+    '475','481','482','483','484','485','486','487','491','492','493','494','495','496','498','499',
+    '811','814','815','816','817','818','820','821','831','833','834','835','836','841','842','843','844','845','846',
+    '847','848','851','855','861','862','863','865','866','867','869','871','872','873','877','878','879'
+]
+
+def clean_phone(raw):
+    digits = re.sub(r'\D', '', str(raw or ''))
+    if len(digits) == 10 and digits.startswith('9'):
+        digits = '7' + digits
+    if len(digits) == 11 and digits.startswith('8'):
+        digits = '7' + digits[1:]
+    if len(digits) == 11 and digits.startswith('7'):
+        code = digits[1:4]
+        num = digits[4:]
+        if code not in VALID_CODES:
+            return ''
+        if len(set(num)) <= 1:
+            return ''
+        if num in ['0000000','1111111','2222222','3333333','4444444','5555555','6666666','7777777','8888888','9999999']:
+            return ''
+        if num[:3] == num[3:] == '000':
+            return ''
+        return '+7' + digits[1:]
+    return ''
+
+def phone_display(phone):
+    d = re.sub(r'\D', '', phone or '')
+    return f"'+7 ({d[1:4]}) {d[4:7]}-{d[7:9]}-{d[9:11]}" if len(d) == 11 else phone
+
+def valid_inn(inn):
+    d = re.sub(r'\D', '', str(inn or ''))
+    if len(d) == 10:
+        coeffs = [2,4,10,3,5,9,4,6,8]
+        return str(sum(int(d[i]) * coeffs[i] for i in range(9)) % 11 % 10) == d[9]
+    if len(d) == 12:
+        c11 = [7,2,4,10,3,5,9,4,6,8]
+        c12 = [3,7,2,4,10,3,5,9,4,6,8]
+        return (str(sum(int(d[i])*c11[i] for i in range(10)) % 11 % 10) == d[10] and
+                str(sum(int(d[i])*c12[i] for i in range(11)) % 11 % 10) == d[11])
+    return False
+
+def html_to_text(html):
+    html = SCRIPT_STYLE_RE.sub(" ", html or "")
+    html = TAG_RE.sub(" ", html)
+    return re.sub(r"\s+", " ", unescape(html)).strip()
+
+def extract_from_text(text):
+    text = text or ""
+    wa_phones = [m for m in WA_RE.findall(text) if m]
+    tg_phones = [m for m in TG_RE.findall(text) if m]
+    extra_phones = wa_phones + tg_phones
+    phones = []
+    for p in PHONE_RE.findall(text) + extra_phones:
+        cleaned = clean_phone(p)
+        if cleaned and len(cleaned) == 12:
+            phones.append(cleaned)
+    phones = list(set(phones))
+    emails = list(set(e.lower() for e in EMAIL_RE.findall(text) if "hh.ru" not in e.lower() and not e.lower().endswith((".png",".jpg",".jpeg"))))
+    socials_vk = SOCIAL_RE.findall(text)
+    tg = [f"https://t.me/{m}" for m in TG_RE.findall(text)]
+    wa = [f"https://wa.me/{m}" for m in WA_RE.findall(text)]
+    vb = [f"https://vb.me/{m}" for m in re.findall(r'(?:https?://)?(?:vb\.me|viber\.me)/(\w+)', text, re.IGNORECASE)]
+    socials = list(set(socials_vk + tg + wa + vb))
+    inn_context = [m.group(1) for m in INN_CONTEXT_RE.finditer(text)]
+    inn_footer = [m.group(1) for m in INN_FOOTER_RE.finditer(text)]
+    inn_any = INN_ANY_RE.findall(text)
+    inns = [i for i in inn_context + inn_footer + inn_any if valid_inn(i)]
+    meta_inn = re.findall(r'(?:data-inn|data-inn-code|meta-inn)="?(\d{10}|\d{12})"?', text)
+    inns.extend(i for i in meta_inn if valid_inn(i))
+    inns = list(set(inns))
+    return {"phones": phones[:5], "emails": emails[:5], "socials": socials[:5], "inn": inns[:3]}
+
+def merge_contacts(*items):
+    merged = {"phones": [], "emails": [], "socials": [], "inn": []}
+    for item in items:
+        for k in merged:
+            merged[k].extend(item.get(k, []))
+    return {k: list(set(v)) for k, v in merged.items()}
+
+def normalize_site(url):
+    if not url:
+        return ""
+    url = str(url).strip()
+    if not url or "hh.ru" in urlparse(url).netloc:
+        return ""
+    if not url.startswith(("http://","https://")):
+        url = "https://" + url
+    return url
+
+def fetch_url(url):
+    try:
+        resp = SESSION.get(url, timeout=12, allow_redirects=True)
+        if resp.status_code == 200 and "text" in resp.headers.get("content-type","text/html"):
+            return resp.text[:300000]
+    except:
+        return ""
+    return ""
+
+def discover_contact_pages(base_url, home_html):
+    pages = [base_url]
+    base = base_url.rstrip("/")
+    for suf in ["/contacts","/kontakty"]:  # только контакты
+        pages.append(base + suf)
+    for link in LINK_RE.findall(home_html or ""):
+        if CONTACT_HINT_RE.search(link):
+            pages.append(urljoin(base_url, link))
+    host = urlparse(base_url).netloc
+    clean = []
+    for p in pages:
+        parsed = urlparse(p)
+        if parsed.scheme in {"http","https"} and parsed.netloc == host and p not in clean:
+            clean.append(p)
+    return clean[:MAX_SITE_PAGES]
+
+def fetch_site_text(site_url):
+    site_url = normalize_site(site_url)
+    if not site_url:
+        return ""
+    home_html = fetch_url(site_url)
+    chunks = []
+    if home_html:
+        chunks.append(html_to_text(home_html))
+    for page in discover_contact_pages(site_url, home_html)[1:]:
+        html = fetch_url(page)
+        if html:
+            chunks.append(html_to_text(html))
+        time.sleep(0.25)
+    return "\n".join(chunks)[:45000]
+
+def openrouter_extract(text):
+    if not OPENROUTER_API_KEY or not text.strip():
+        return {"phones":[],"emails":[],"socials":[],"inn":[]}
+    prompt = (
+        "Извлеки из текста реальные контактные данные компании: российские телефоны, email, "
+        "соцсети и ИНН. Ничего не придумывай. Верни только JSON: "
+        '{"phones":[],"emails":[],"socials":[],"inn":[]}\n\n'
+        f"Текст:\n{text[:9000]}"
+    )
+    try:
+        resp = SESSION.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}","Content-Type":"application/json"},
+            json={"model": OPENROUTER_MODEL,"messages":[{"role":"user","content":prompt}],"temperature":0,"max_tokens":500},
+            timeout=40
+        )
+        if resp.status_code != 200:
+            return {"phones":[],"emails":[],"socials":[],"inn":[]}
+        content = resp.json()["choices"][0]["message"]["content"]
+        m = re.search(r'\{[\s\S]*\}', content)
+        if not m: return {"phones":[],"emails":[],"socials":[],"inn":[]}
+        data = json.loads(m.group(0))
+        return {
+            "phones": [clean_phone(p) for p in data.get("phones",[])],
+            "emails": [e.lower() for e in data.get("emails",[]) if "@" in e],
+            "socials": list(set(data.get("socials",[]))),
+            "inn": [i for i in data.get("inn",[]) if valid_inn(i)]
+        }
+    except:
+        return {"phones":[],"emails":[],"socials":[],"inn":[]}
+
+def company_type(name, inns):
+    n = (name or "").upper()
+    if "ИП" in n:
+        return "ИП"
+    if "ООО" in n:
+        return "ООО"
+    if "ПАО" in n:
+        return "ПАО"
+    if "АО" in n:
+        return "АО"
+    if any(len(re.sub(r"\D","",i))==12 for i in inns):
+        return "ИП"
+    if any(len(re.sub(r"\D","",i))==10 for i in inns):
+        return "Компания"
+    return ""
+
+def vacancy_type(sid):
+    return {"remote":"Удалённая работа","fullDay":"Офис","flexible":"Гибрид","shift":"Сменный график"}.get(sid or "","")
+
+def salary_text(sal):
+    if not sal: return ""
+    f = sal.get("from"); t = sal.get("to"); c = sal.get("currency","")
+    if f and t: return f"от {f} до {t} {c}".strip()
+    if f: return f"от {f} {c}".strip()
+    if t: return f"до {t} {c}".strip()
+    return ""
+
+def get_hh_token():
+    if not HH_CLIENT_ID or not HH_CLIENT_SECRET:
+        log("HH keys missing — run without token")
+        return ""
+    try:
+        r = requests.post(
+            "https://api.hh.ru/token",
+            data={"grant_type":"client_credentials","client_id":HH_CLIENT_ID,"client_secret":HH_CLIENT_SECRET},
+            headers={"User-Agent": SESSION.headers["User-Agent"]},
+            timeout=20
+        )
+        if r.status_code == 200:
+            token = r.json().get("access_token")
+            if token:
+                SESSION.headers["Authorization"] = f"Bearer {token}"
+                log("HH token obtained")
+                return token
+        log(f"HH token failed: {r.status_code} {r.text[:150]}")
+    except Exception as exc:
+        log(f"HH token exception: {exc}")
+    return ""
+
+def hh_get(path, **params):
+    url = path if path.startswith("http") else "https://api.hh.ru" + path
+    for attempt in range(4):
+        try:
+            resp = SESSION.get(url, params=params, timeout=25)
+            if resp.status_code == 200:
+                return resp.json()
+            if resp.status_code == 429:
+                delay = int(resp.headers.get("Retry-After","10"))
+                log(f"HH rate limit, sleep {delay}s")
+                time.sleep(delay)
+                continue
+            if resp.status_code in {403,502,503,504}:
+                delay = 10 + attempt * 10
+                log(f"HH HTTP {resp.status_code}, retry after {delay}s")
+                time.sleep(delay)
+                continue
+            log(f"HH HTTP {resp.status_code}: {resp.text[:180]}")
+            return {}
+        except requests.RequestException as exc:
+            log(f"HH request error: {exc}")
+            time.sleep(5 + attempt*5)
+    return {}
+
+def get_employer_inn(employer):
+    if not employer: return ""
+    eid = employer.get("id")
+    if not eid: return ""
+    data = hh_get(f"/employers/{eid}")
+    return data.get("inn", "") or ""
+
+def get_employer_site(employer):
+    if not employer: return ""
+    direct = normalize_site(employer.get("site_url",""))
+    if direct: return direct
+    eid = employer.get("id")
+    if not eid: return ""
+    data = hh_get(f"/employers/{eid}")
+    return normalize_site(data.get("site_url",""))
+
+def prepare_sheet(clear=False):
+    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=["https://www.googleapis.com/auth/spreadsheets"])
+    client = gspread.authorize(creds)
+    sheet = client.open_by_key(SPREADSHEET_ID)
+    try:
+        ws = sheet.worksheet(SHEET_TAB)
+    except gspread.WorksheetNotFound:
+        ws = sheet.add_worksheet(SHEET_TAB, 20000, len(HEADERS))
+    if clear or ws.row_values(1) != HEADERS:
+        ws.clear()
+        ws.insert_row(HEADERS, 1)
+    return ws
+
+def existing_keys(worksheet):
+    keys = set()
+    rows = worksheet.get_all_values()[1:]
+    for row in rows:
+        if len(row) > 4:
+            phone = re.sub(r"\D", "", row[4])
+            if phone:
+                keys.add("phone:" + phone)
+        if len(row) > 5 and row[5]:
+            keys.add("email:" + row[5].lower())
+        if len(row) > 8 and row[8]:
+            keys.add("inn:" + row[8])
+        if len(row) > 14 and row[14]:
+            keys.add("url:" + row[14])
+    return keys
+
+def row_key(row):
+    keys = []
+    phone = re.sub(r"\D", "", row[4])
+    if phone:
+        keys.append("phone:" + phone)
+    if row[5]:
+        keys.append("email:" + row[5].lower())
+    if row[8]:
+        keys.append("inn:" + row[8])
+    if row[14]:
+        keys.append("url:" + row[14])
+    return keys
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--clear", action="store_true")
+    parser.add_argument("--limit", type=int)
+    args = parser.parse_args()
+
+    get_hh_token()
+    ws = prepare_sheet(clear=args.clear)
+    seen = existing_keys(ws)
+    target = args.limit or TARGET
+    added = sum(1 for r in ws.get_all_values()[1:] if r[4])  # строки с телефоном
+    scanned = 0
+    log(f"jobs={len(JOBS)} areas={AREA_IDS} target={target} remote={REMOTE_ONLY} write_empty={WRITE_EMPTY}")
+
+    for job in JOBS:
+        if added >= target: break
+        for area in AREA_IDS:
+            if added >= target: break
+            for page in range(MAX_PAGES):
+                if added >= target: break
+                params = {
+                    "text": job, "area": area, "page": page,
+                    "per_page": PER_PAGE, "search_period": SEARCH_PERIOD,
+                    "order_by": "publication_time",
+                    "search_field": ["name","company_name","description"]
+                }
+                if REMOTE_ONLY:
+                    params["schedule"] = "remote"
+                data = hh_get("/vacancies", **params)
+                items = data.get("items") or []
+                log(f"HH {job!r} area={area} page={page}: {len(items)}")
+                if not items: break
+                for item in items:
+                    if added >= target: break
+                    scanned += 1
+                    detail = hh_get(f"/vacancies/{item.get('id')}")
+                    if not detail: continue
+                    emp = detail.get("employer") or {}
+                    company = emp.get("name","")
+                    title = detail.get("name","")
+                    city = (detail.get("area") or {}).get("name","")
+                    site_url = get_employer_site(emp)
+                    hh_inn = get_employer_inn(emp)
+                    desc = html_to_text(detail.get("description",""))
+                    site_text = fetch_site_text(site_url) if site_url else ""
+                    found = merge_contacts(extract_from_text(desc), extract_from_text(site_text))
+                    if hh_inn:
+                        found["inn"] = list(set(found["inn"] + [hh_inn]))
+                    if not WRITE_EMPTY and not (found["phones"] or found["emails"] or found["inn"]):
+                        log(f"skip no contacts: {company[:40]}")
+                        time.sleep(PAUSE + random.random())
+                        continue
+                    schedule = detail.get("schedule") or {}
+                    row = [
+                        datetime.now().strftime("%Y-%m-%d %H:%M"), company, title, city,
+                        ", ".join(phone_display(p) for p in found["phones"][:3]),
+                        ", ".join(found["emails"][:3]),
+                        site_url,
+                        ", ".join(found["socials"][:5]),
+                        ", ".join(found["inn"][:3]),
+                        company_type(company, found["inn"]),
+                        salary_text(detail.get("salary")),
+                        (detail.get("experience") or {}).get("name",""),
+                        schedule.get("name",""),
+                        vacancy_type(schedule.get("id","")),
+                        detail.get("alternate_url",""),
+                        "HH+site" if site_text else "HH"
+                    ]
+                    keys = row_key(row)
+                    if keys and any(key in seen for key in keys):
+                        log(f"skip duplicate: {company[:40]}")
+                        time.sleep(PAUSE)
+                        continue
+                    ws.append_row(row, value_input_option="USER_ENTERED")
+                    for key in keys:
+                        seen.add(key)
+                    added += 1
+                    log(f"ADD {added}/{target}: {company[:35]} phone={bool(row[4])} email={bool(row[5])} inn={bool(row[8])} type={row[9]}")
+                    time.sleep(PAUSE + random.random())
+                time.sleep(2)
+    log(f"done added={added} scanned={scanned}")
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        log("stopped by user")
+        sys.exit(130)
+3. daily_fresh.sh
+bash
+#!/bin/bash
+set -e
+cd /opt/hh-parser
+
+export $(grep -E '^HH_CLIENT_ID_DAILY=|^HH_CLIENT_SECRET_DAILY=' .env | xargs)
+
+if [ -f parser_fresh.pid ]; then
+    kill $(cat parser_fresh.pid) 2>/dev/null || true
+    rm parser_fresh.pid
+fi
+
+TODAY=$(date +%Y-%m-%d)
+
+./venv/bin/python - <<'PYEOF'
+import gspread
+from google.oauth2.service_account import Credentials
+from datetime import date
+
+creds = Credentials.from_service_account_file("service_account.json", scopes=["https://www.googleapis.com/auth/spreadsheets"])
+sheet = gspread.authorize(creds).open_by_key("1zknVZMtz2osTrEoVbQDN1jWyVQSPybVE54FNlTlVhIY")
+today = date.today().isoformat()
+
+try:
+    ws = sheet.worksheet(today)
+except:
+    ws = sheet.add_worksheet(today, 20000, 16)
+
+# ws.clear()  # раскомментировать, если нужно очищать перед записью
+ws.insert_row(["Дата","Компания","Вакансия","Город","Телефон","Email","Сайт","Соцсети","ИНН","Тип","Зарплата","Опыт","График","Тип занятости","Ссылка HH","Источник"], 1)
+print(f"Вкладка {today} создана")
+PYEOF
+
+HH_CLIENT_ID="$HH_CLIENT_ID_DAILY" \
+HH_CLIENT_SECRET="$HH_CLIENT_SECRET_DAILY" \
+GOOGLE_SHEET_TAB="$TODAY" \
+HH_SEARCH_PERIOD_DAYS=1 \
+HH_TARGET_CONTACTS=1000 \
+HH_MAX_SEARCH_PAGES=30 \
+HH_WRITE_EMPTY=0 \
+HH_PAUSE_SECONDS=1 \
+nohup ./venv/bin/python parser_final_fixed.py > "fresh_${TODAY}.log" 2>&1 &
+
+echo $! > parser_fresh.pid
+echo "Ежедневный срез PID $(cat parser_fresh.pid)"
+4. cleanup_logs.sh
+bash
+#!/bin/bash
+cd /opt/hh-parser
+find . -name "*.log" -mtime +7 -delete
+find . -name "fresh_*.log" -mtime +3 -delete
+5. Crontab
+text
+0 3 * * * /opt/hh-parser/cleanup_logs.sh
+50 7 * * * pkill -f parser_final_fixed.py && sleep 5 && cd /opt/hh-parser && nohup ./venv/bin/python parser_final_fixed.py > main_contacts.log 2>&1 &
+0 8 * * * /opt/hh-parser/daily_fresh.sh
+@reboot sleep 30 && cd /opt/hh-parser && nohup ./venv/bin/python parser_final_fixed.py > main_contacts.log 2>&1 &
+6. Инструкция (краткая)
+Подключение к серверу: ssh root@31.129.98.155
+Проверка работы: ps aux | grep parser_final
+Логи: tail -20 main_contacts.log / tail -20 fresh_$(date +%Y-%m-%d).log
+Остановить всё: pkill -f parser_final_fixed.py
+Запустить основное: cd /opt/hh-parser && nohup ./venv/bin/python parser_final_fixed.py > main_contacts.log 2>&1 &
+Запустить ежедневный: cd /opt/hh-parser && source .env && ./daily_fresh.sh
+Изменить должности/период: nano .env, затем перезапустить.
+
+Вся конфигурация в .env (ключи, список должностей, период поиска, лимиты).
+При изменении .env требуется перезапуск основного сборщика.
+Система полностью автономна: при ребуте сервера поднимается сама, каждый день создаёт отчёт за вчера, логи чистит раз в сутки.
+
+Сохрани этот блок в project_full.txt – это твоя полная структура. Можешь использовать для создания инструкции 
