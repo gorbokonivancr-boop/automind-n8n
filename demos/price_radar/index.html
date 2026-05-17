@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoMind: Радар цен конкурентов</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary: #6366f1;
+            --secondary: #94a3b8;
+            --bg: #f1f5f9;
+            --card: #ffffff;
+            --text: #0f172a;
+            --up: #ef4444;
+            --down: #10b981;
+        }
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 20px;
+        }
+        .container { max-width: 1100px; margin: 0 auto; }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .status-bar {
+            background: #dcfce7;
+            color: #166534;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+        }
+
+        @media (max-width: 900px) {
+            .grid { grid-template-columns: 1fr; }
+        }
+
+        .card {
+            background: var(--card);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        }
+
+        h2 { margin-top: 0; font-size: 1.25rem; margin-bottom: 20px; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th {
+            color: var(--secondary);
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        td {
+            padding: 16px 0;
+            border-bottom: 1px solid #f1f5f9;
+            font-size: 0.95rem;
+        }
+
+        .price-tag {
+            font-weight: 700;
+        }
+
+        .change {
+            font-size: 0.8rem;
+            margin-left: 5px;
+        }
+        .change.up { color: var(--up); }
+        .change.down { color: var(--down); }
+
+        .competitor-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .competitor-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            background: #f8fafc;
+            border-radius: 8px;
+        }
+
+        .competitor-name { font-weight: 500; }
+        .competitor-dist { color: var(--secondary); font-size: 0.8rem; }
+
+        /* Loading Overlay */
+        #loading-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.9);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+        <p style="margin-top: 20px; font-weight: 600;">Сканирование цен конкурентов...</p>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1 style="margin:0">Радар цен конкурентов</h1>
+                <p style="color: var(--secondary); margin: 5px 0 0;">Мониторинг топ-5 услуг в реальном времени</p>
+            </div>
+            <div class="status-bar">
+                <span style="display:inline-block; width:8px; height:8px; background:var(--down); border-radius:50%"></span>
+                Обновлено: <span id="current-date"></span>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h2>Динамика цен за 60 дней</h2>
+                <canvas id="priceChart" height="200"></canvas>
+            </div>
+            <div class="card">
+                <h2>Конкуренты в радиусе 3км</h2>
+                <div class="competitor-list">
+                    <div class="competitor-item">
+                        <div>
+                            <div class="competitor-name">Sakurami</div>
+                            <div class="competitor-dist">0.4 км от вас</div>
+                        </div>
+                        <div class="status-bar" style="background:#fee2e2; color:#991b1b; padding:4px 8px">Демпинг -5%</div>
+                    </div>
+                    <div class="competitor-item">
+                        <div>
+                            <div class="competitor-name">White Fox</div>
+                            <div class="competitor-dist">1.2 км от вас</div>
+                        </div>
+                        <div class="status-bar" style="padding:4px 8px">Без изменений</div>
+                    </div>
+                    <div class="competitor-item">
+                        <div>
+                            <div class="competitor-name">Dessange</div>
+                            <div class="competitor-dist">2.5 км от вас</div>
+                        </div>
+                        <div class="status-bar" style="background:#fef9c3; color:#854d0e; padding:4px 8px">Повышение +10%</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top:24px">
+            <h2>Сравнительная таблица</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Услуга</th>
+                        <th>Ваша цена</th>
+                        <th>Ср. по рынку</th>
+                        <th>Разница</th>
+                        <th>Sakurami</th>
+                        <th>White Fox</th>
+                        <th>Dessange</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Сложное окрашивание</td>
+                        <td class="price-tag">12,500 ₽</td>
+                        <td>13,200 ₽</td>
+                        <td class="change down">-700 ₽</td>
+                        <td>11,900 ₽</td>
+                        <td>13,500 ₽</td>
+                        <td>14,200 ₽</td>
+                    </tr>
+                    <tr>
+                        <td>Стрижка + укладка</td>
+                        <td class="price-tag">3,500 ₽</td>
+                        <td>3,450 ₽</td>
+                        <td class="change up">+50 ₽</td>
+                        <td>3,200 ₽</td>
+                        <td>3,600 ₽</td>
+                        <td>3,550 ₽</td>
+                    </tr>
+                    <tr>
+                        <td>Маникюр (комплекс)</td>
+                        <td class="price-tag">2,800 ₽</td>
+                        <td>2,950 ₽</td>
+                        <td class="change down">-150 ₽</td>
+                        <td>2,700 ₽</td>
+                        <td>2,900 ₽</td>
+                        <td>3,250 ₽</td>
+                    </tr>
+                    <tr>
+                        <td>Уход для волос (K18)</td>
+                        <td class="price-tag">4,500 ₽</td>
+                        <td>4,200 ₽</td>
+                        <td class="change up">+300 ₽</td>
+                        <td>3,900 ₽</td>
+                        <td>4,300 ₽</td>
+                        <td>4,400 ₽</td>
+                    </tr>
+                    <tr>
+                        <td>Коррекция бровей</td>
+                        <td class="price-tag">1,200 ₽</td>
+                        <td>1,150 ₽</td>
+                        <td class="change up">+50 ₽</td>
+                        <td>900 ₽</td>
+                        <td>1,300 ₽</td>
+                        <td>1,250 ₽</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('current-date').innerText = new Date().toLocaleDateString('ru-RU');
+
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                document.getElementById('loading-overlay').style.display = 'none';
+                initChart();
+            }, 2000);
+        });
+
+        function initChart() {
+            const ctx = document.getElementById('priceChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: ['1 апр', '15 апр', '1 май', '15 май', 'Сегодня'],
+                    datasets: [
+                        {
+                            label: 'Ваша цена (Окрашивание)',
+                            data: [12500, 12500, 12500, 12500, 12500],
+                            borderColor: '#6366f1',
+                            borderWidth: 3,
+                            fill: false,
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Sakurami (Демпинг)',
+                            data: [13500, 13200, 12800, 12100, 11900],
+                            borderColor: '#ef4444',
+                            borderDash: [5, 5],
+                            fill: false,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'White Fox',
+                            data: [13000, 13100, 13400, 13500, 13500],
+                            borderColor: '#94a3b8',
+                            fill: false,
+                            tension: 0.1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { position: 'bottom' }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            ticks: { callback: value => value + ' ₽' }
+                        }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
