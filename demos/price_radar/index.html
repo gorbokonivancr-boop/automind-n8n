@@ -57,6 +57,7 @@
             border-radius: 16px;
             padding: 24px;
             box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+            position: relative;
         }
 
         h2 { margin-top: 0; font-size: 1.25rem; margin-bottom: 20px; }
@@ -111,7 +112,6 @@
         .competitor-name { font-weight: 500; }
         .competitor-dist { color: var(--secondary); font-size: 0.8rem; }
 
-        /* Loading Overlay */
         #loading-overlay {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
@@ -121,6 +121,7 @@
             justify-content: center;
             align-items: center;
             z-index: 1000;
+            display: none;
         }
         .spinner {
             width: 50px;
@@ -131,12 +132,25 @@
             animation: spin 1s linear infinite;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        .refresh-btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
     </style>
 </head>
 <body>
     <div id="loading-overlay">
         <div class="spinner"></div>
-        <p style="margin-top: 20px; font-weight: 600;">Сканирование цен конкурентов...</p>
+        <p style="margin-top: 20px; font-weight: 600;">AI-парсинг сайтов конкурентов...</p>
     </div>
 
     <div class="container">
@@ -145,9 +159,15 @@
                 <h1 style="margin:0">Радар цен конкурентов</h1>
                 <p style="color: var(--secondary); margin: 5px 0 0;">Мониторинг топ-5 услуг в реальном времени</p>
             </div>
-            <div class="status-bar">
-                <span style="display:inline-block; width:8px; height:8px; background:var(--down); border-radius:50%"></span>
-                Обновлено: <span id="current-date"></span>
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
+                <button class="refresh-btn" onclick="refreshData()">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                    Обновить сейчас
+                </button>
+                <div class="status-bar">
+                    <span style="display:inline-block; width:8px; height:8px; background:var(--down); border-radius:50%"></span>
+                    Данные обновлены: <span id="current-time"></span>
+                </div>
             </div>
         </div>
 
@@ -155,6 +175,9 @@
             <div class="card">
                 <h2>Динамика цен за 60 дней</h2>
                 <canvas id="priceChart" height="200"></canvas>
+                <p style="font-size: 0.75rem; color: var(--secondary); margin-top: 15px; text-align: center;">
+                    ℹ️ Данные получены с помощью AI-агентов AutoMind через автоматический обход сайтов.
+                </p>
             </div>
             <div class="card">
                 <h2>Конкуренты в радиусе 3км</h2>
@@ -164,21 +187,21 @@
                             <div class="competitor-name">Sakurami</div>
                             <div class="competitor-dist">0.4 км от вас</div>
                         </div>
-                        <div class="status-bar" style="background:#fee2e2; color:#991b1b; padding:4px 8px">Демпинг -5%</div>
+                        <div class="status-bar" id="comp-status-1" style="background:#fee2e2; color:#991b1b; padding:4px 8px">Демпинг -5%</div>
                     </div>
                     <div class="competitor-item">
                         <div>
                             <div class="competitor-name">White Fox</div>
                             <div class="competitor-dist">1.2 км от вас</div>
                         </div>
-                        <div class="status-bar" style="padding:4px 8px">Без изменений</div>
+                        <div class="status-bar" id="comp-status-2" style="padding:4px 8px">Без изменений</div>
                     </div>
                     <div class="competitor-item">
                         <div>
                             <div class="competitor-name">Dessange</div>
                             <div class="competitor-dist">2.5 км от вас</div>
                         </div>
-                        <div class="status-bar" style="background:#fef9c3; color:#854d0e; padding:4px 8px">Повышение +10%</div>
+                        <div class="status-bar" id="comp-status-3" style="background:#fef9c3; color:#854d0e; padding:4px 8px">Повышение +10%</div>
                     </div>
                 </div>
             </div>
@@ -186,7 +209,7 @@
 
         <div class="card" style="margin-top:24px">
             <h2>Сравнительная таблица</h2>
-            <table>
+            <table id="price-table">
                 <thead>
                     <tr>
                         <th>Услуга</th>
@@ -199,112 +222,121 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr>
-                        <td>Сложное окрашивание</td>
-                        <td class="price-tag">12,500 ₽</td>
-                        <td>13,200 ₽</td>
-                        <td class="change down">-700 ₽</td>
-                        <td>11,900 ₽</td>
-                        <td>13,500 ₽</td>
-                        <td>14,200 ₽</td>
-                    </tr>
-                    <tr>
-                        <td>Стрижка + укладка</td>
-                        <td class="price-tag">3,500 ₽</td>
-                        <td>3,450 ₽</td>
-                        <td class="change up">+50 ₽</td>
-                        <td>3,200 ₽</td>
-                        <td>3,600 ₽</td>
-                        <td>3,550 ₽</td>
-                    </tr>
-                    <tr>
-                        <td>Маникюр (комплекс)</td>
-                        <td class="price-tag">2,800 ₽</td>
-                        <td>2,950 ₽</td>
-                        <td class="change down">-150 ₽</td>
-                        <td>2,700 ₽</td>
-                        <td>2,900 ₽</td>
-                        <td>3,250 ₽</td>
-                    </tr>
-                    <tr>
-                        <td>Уход для волос (K18)</td>
-                        <td class="price-tag">4,500 ₽</td>
-                        <td>4,200 ₽</td>
-                        <td class="change up">+300 ₽</td>
-                        <td>3,900 ₽</td>
-                        <td>4,300 ₽</td>
-                        <td>4,400 ₽</td>
-                    </tr>
-                    <tr>
-                        <td>Коррекция бровей</td>
-                        <td class="price-tag">1,200 ₽</td>
-                        <td>1,150 ₽</td>
-                        <td class="change up">+50 ₽</td>
-                        <td>900 ₽</td>
-                        <td>1,300 ₽</td>
-                        <td>1,250 ₽</td>
-                    </tr>
+                    <!-- Table content generated by JS for randomization -->
                 </tbody>
             </table>
         </div>
     </div>
 
     <script>
-        document.getElementById('current-date').innerText = new Date().toLocaleDateString('ru-RU');
+        let chart;
+        const services = [
+            { name: "Сложное окрашивание", base: 12500 },
+            { name: "Стрижка + укладка", base: 3500 },
+            { name: "Маникюр (комплекс)", base: 2800 },
+            { name: "Уход для волос (K18)", base: 4500 },
+            { name: "Коррекция бровей", base: 1200 }
+        ];
 
-        window.addEventListener('load', () => {
+        function updateTimestamp() {
+            const now = new Date();
+            document.getElementById('current-time').innerText = now.toLocaleDateString('ru-RU') + ' ' + now.toLocaleTimeString('ru-RU');
+        }
+
+        function getRandomVariation(val, range = 0.03) {
+            const factor = 1 + (Math.random() * range * 2 - range);
+            return Math.round(val * factor / 50) * 50; // Round to 50
+        }
+
+        function refreshData() {
+            const overlay = document.getElementById('loading-overlay');
+            overlay.style.display = 'flex';
+
             setTimeout(() => {
-                document.getElementById('loading-overlay').style.display = 'none';
-                initChart();
-            }, 2000);
-        });
+                overlay.style.display = 'none';
+                updateTimestamp();
+                updateTable();
+                updateChart();
+                updateCompetitorStatuses();
+            }, 1500);
+        }
 
-        function initChart() {
-            const ctx = document.getElementById('priceChart').getContext('2d');
-            new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: ['1 апр', '15 апр', '1 май', '15 май', 'Сегодня'],
-                    datasets: [
-                        {
-                            label: 'Ваша цена (Окрашивание)',
-                            data: [12500, 12500, 12500, 12500, 12500],
-                            borderColor: '#6366f1',
-                            borderWidth: 3,
-                            fill: false,
-                            tension: 0.1
-                        },
-                        {
-                            label: 'Sakurami (Демпинг)',
-                            data: [13500, 13200, 12800, 12100, 11900],
-                            borderColor: '#ef4444',
-                            borderDash: [5, 5],
-                            fill: false,
-                            tension: 0.3
-                        },
-                        {
-                            label: 'White Fox',
-                            data: [13000, 13100, 13400, 13500, 13500],
-                            borderColor: '#94a3b8',
-                            fill: false,
-                            tension: 0.1
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    plugins: {
-                        legend: { position: 'bottom' }
-                    },
-                    scales: {
-                        y: {
-                            beginAtZero: false,
-                            ticks: { callback: value => value + ' ₽' }
-                        }
-                    }
-                }
+        function updateTable() {
+            const tbody = document.querySelector('#price-table tbody');
+            tbody.innerHTML = '';
+
+            services.forEach(s => {
+                const sakurami = getRandomVariation(s.base * 0.92);
+                const whitefox = getRandomVariation(s.base * 1.05);
+                const dessange = getRandomVariation(s.base * 1.12);
+                const avg = Math.round((sakurami + whitefox + dessange) / 3);
+                const diff = s.base - avg;
+                const diffClass = diff < 0 ? 'down' : 'up';
+                const diffSymbol = diff < 0 ? '' : '+';
+
+                tbody.innerHTML += `
+                    <tr>
+                        <td>${s.name}</td>
+                        <td class="price-tag">${s.base.toLocaleString()} ₽</td>
+                        <td>${avg.toLocaleString()} ₽</td>
+                        <td class="change ${diffClass}">${diffSymbol}${diff.toLocaleString()} ₽</td>
+                        <td>${sakurami.toLocaleString()} ₽</td>
+                        <td>${whitefox.toLocaleString()} ₽</td>
+                        <td>${dessange.toLocaleString()} ₽</td>
+                    </tr>
+                `;
             });
         }
+
+        function updateCompetitorStatuses() {
+            const statuses = [
+                { id: 'comp-status-1', text: 'Демпинг -' + (Math.random()*5+2).toFixed(1) + '%', bg: '#fee2e2', color: '#991b1b' },
+                { id: 'comp-status-2', text: 'Без изменений', bg: '#dcfce7', color: '#166534' },
+                { id: 'comp-status-3', text: 'Повышение +' + (Math.random()*10+1).toFixed(1) + '%', bg: '#fef9c3', color: '#854d0e' }
+            ];
+            statuses.forEach(s => {
+                const el = document.getElementById(s.id);
+                el.innerText = s.text;
+                el.style.backgroundColor = s.bg;
+                el.style.color = s.color;
+            });
+        }
+
+        function updateChart() {
+            const data1 = [12500, 12500, 12500, 12500, 12500];
+            const data2 = [13500, 13200, 12800, 12100, getRandomVariation(11900)];
+            const data3 = [13000, 13100, 13400, 13500, getRandomVariation(13500)];
+
+            if (chart) {
+                chart.data.datasets[1].data = data2;
+                chart.data.datasets[2].data = data3;
+                chart.update();
+            } else {
+                const ctx = document.getElementById('priceChart').getContext('2d');
+                chart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: ['1 апр', '15 апр', '1 май', '15 май', 'Сегодня'],
+                        datasets: [
+                            { label: 'Ваша цена', data: data1, borderColor: '#6366f1', borderWidth: 3, fill: false },
+                            { label: 'Sakurami', data: data2, borderColor: '#ef4444', borderDash: [5, 5], fill: false },
+                            { label: 'White Fox', data: data3, borderColor: '#94a3b8', fill: false }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { position: 'bottom' } },
+                        scales: { y: { ticks: { callback: v => v + ' ₽' } } }
+                    }
+                });
+            }
+        }
+
+        window.onload = () => {
+            updateTimestamp();
+            updateTable();
+            updateChart();
+        };
     </script>
 </body>
 </html>

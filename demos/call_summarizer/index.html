@@ -24,6 +24,15 @@
         .header { text-align: center; margin-bottom: 40px; }
         .header h1 { font-size: 2rem; margin-bottom: 10px; color: var(--primary); }
 
+        .upload-section {
+            background: var(--card);
+            padding: 30px;
+            border-radius: 20px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
         .upload-zone {
             border: 2px dashed var(--primary);
             background: var(--accent);
@@ -32,7 +41,6 @@
             text-align: center;
             cursor: pointer;
             transition: all 0.3s;
-            margin-bottom: 30px;
         }
         .upload-zone:hover { background: #ede9fe; }
         .upload-zone p { margin: 10px 0 0; color: var(--primary); font-weight: 600; }
@@ -80,7 +88,6 @@
         .score-fill {
             height: 100%;
             background: linear-gradient(90deg, #ef4444, #10b981);
-            width: 80%;
         }
 
         .transcript-preview {
@@ -109,104 +116,142 @@
             margin: 20px 0;
         }
         .dot-flashing {
-            position: relative;
-            width: 10px;
-            height: 10px;
-            border-radius: 5px;
-            background-color: var(--primary);
-            color: var(--primary);
+            position: relative; width: 10px; height: 10px; border-radius: 5px;
+            background-color: var(--primary); color: var(--primary);
             animation: dot-flashing 1s infinite linear alternate;
-            display: inline-block;
-            margin: 0 15px;
+            display: inline-block; margin: 0 15px;
         }
-        @keyframes dot-flashing {
-            0% { background-color: var(--primary); }
-            50%, 100% { background-color: #ebe6ff; }
-        }
+        @keyframes dot-flashing { 0% { background-color: var(--primary); } 50%, 100% { background-color: #ebe6ff; } }
+
+        #file-input { display: none; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>AI-Суммаризатор звонков</h1>
-            <p>Контроль качества обслуживания за 5 секунд</p>
+            <p>Контроль качества обслуживания (Whisper + GPT)</p>
         </div>
 
-        <div class="upload-zone" onclick="startDemo()">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary)"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            <p>Нажмите для загрузки записи (.mp3, .wav)</p>
-            <span style="font-size: 0.85rem; color: var(--secondary);">Или выберите пример «Звонок Анны (окрашивание)»</span>
+        <div class="upload-section">
+            <input type="file" id="file-input" onchange="handleFileUpload(event)">
+            <div class="upload-zone" onclick="document.getElementById('file-input').click()">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <p>Загрузите свой файл (.mp3, .wav) для LIVE-анализа</p>
+                <span style="font-size: 0.85rem; color: var(--secondary);">Или нажмите для выбора примера</span>
+            </div>
+            <p style="margin-top: 15px; font-size: 0.9rem; color: var(--secondary);">
+                ⚡ LIVE MODE: Файл будет отправлен на сервер для распознавания и суммаризации.
+            </p>
         </div>
 
         <div id="processing-anim">
             <div class="dot-flashing"></div>
-            <p>AI слушает запись и выделяет главное...</p>
+            <p id="status-text">AI слушает запись (Whisper API)...</p>
         </div>
 
         <div class="result-card" id="result">
-            <div class="section-title">✨ Итоги анализа звонка</div>
+            <div id="waveform" style="margin-bottom: 20px;"></div>
+            <div style="text-align: center; margin-bottom: 20px;">
+                <button onclick="wavesurfer.playPause()" style="background: var(--primary); color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer;">Play / Pause</button>
+            </div>
+
+            <div class="section-title">✨ Итоги анализа (LIVE)</div>
 
             <div class="summary-grid">
                 <div class="data-point">
                     <label>Имя клиента</label>
-                    <span>Анна</span>
+                    <span id="res-name">-</span>
                 </div>
                 <div class="data-point">
                     <label>Цель звонка</label>
-                    <span>Сложное окрашивание</span>
-                </div>
-                <div class="data-point">
-                    <label>Бюджет / Чек</label>
-                    <span>~12,000 - 15,000 ₽</span>
+                    <span id="res-purpose">-</span>
                 </div>
                 <div class="data-point">
                     <label>Статус</label>
-                    <span style="color: #ef4444;">Запись не состоялась</span>
+                    <span id="res-status">-</span>
+                </div>
+                <div class="data-point">
+                    <label>Оценка админа</label>
+                    <span id="res-score">-</span>
                 </div>
             </div>
 
             <div class="section-title">📉 Проблемные зоны</div>
-            <div style="background: #fff1f2; padding: 15px; border-radius: 10px; border-left: 4px solid #ef4444; margin-bottom: 25px;">
-                <b>Конфликт:</b> Нет мест на субботу. Администратор сухо ответила "мест нет" и не предложила альтернативные дни или лист ожидания. Клиент ушел к конкурентам.
+            <div id="res-conflict" style="background: #fff1f2; padding: 15px; border-radius: 10px; border-left: 4px solid #ef4444; margin-bottom: 25px;">
+                -
             </div>
-
-            <div class="section-title">👤 Оценка администратора (Мария)</div>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span>Соблюдение скрипта: <b>60%</b></span>
-                <span style="font-size: 1.2rem; font-weight: 800; color: #f59e0b;">4 / 5</span>
-            </div>
-            <div class="score-bar"><div class="score-fill" style="width: 80%;"></div></div>
-            <p style="font-size: 0.9rem; color: var(--secondary);">Рекомендация: Провести инструктаж по работе с листом ожидания.</p>
 
             <div class="section-title">📝 Фрагмент транскрибации</div>
-            <div class="transcript-preview">
-                <b>01:12 Администратор:</b> Добрый день, Салон "Эстетика", Мария слушает...<br>
-                <b>01:15 Клиент:</b> Здравствуйте, хотела бы записаться на субботу на сложное окрашивание к Анне.<br>
-                <b>01:20 Администратор:</b> Ой, на субботу у Анны всё плотно. Совсем мест нет.<br>
-                <b>01:25 Клиент:</b> Жаль, мне очень нужно было именно в субботу...<br>
-                <b>01:28 Администратор:</b> Ничем не могу помочь, выходные всегда забиты.
+            <div class="transcript-preview" id="res-transcript">
+                -
             </div>
         </div>
 
         <p class="demo-disclaimer">
-            Это демо-версия. В полной версии поддерживается интеграция с Zadarma/Mango/Mango Office и автоматическая отправка отчета владельцу в Telegram.
+            Это полнофункциональное демо. Для экономии бюджета в демо-версии используется Whisper (эмуляция на бэкенде) + DeepSeek GPT. В продакшене — полная интеграция с телефонией.
         </p>
     </div>
 
+    <script src="https://unpkg.com/wavesurfer.js"></script>
     <script>
-        function startDemo() {
-            const upload = document.querySelector('.upload-zone');
+        let wavesurfer;
+
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            if (wavesurfer) wavesurfer.destroy();
+            wavesurfer = WaveSurfer.create({
+                container: '#waveform',
+                waveColor: '#8b5cf6',
+                progressColor: '#4c1d95',
+                cursorColor: '#4c1d95',
+                barWidth: 2,
+                barRadius: 3,
+                cursorWidth: 1,
+                height: 60,
+                barGap: 3
+            });
+            wavesurfer.loadBlob(file);
+
+            const uploadZone = document.querySelector('.upload-section');
             const anim = document.getElementById('processing-anim');
             const result = document.getElementById('result');
+            const status = document.getElementById('status-text');
 
-            upload.style.display = 'none';
+            uploadZone.style.display = 'none';
             anim.style.display = 'block';
+            result.style.display = 'none';
 
-            setTimeout(() => {
+            // Simulate Whisper phase then GPT phase
+            setTimeout(() => { status.innerText = "Формирование выводов (GPT-4o / DeepSeek)..."; }, 1500);
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/calls/summarize', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                document.getElementById('res-name').innerText = data.client_name;
+                document.getElementById('res-purpose').innerText = data.purpose;
+                document.getElementById('res-status').innerText = data.status;
+                document.getElementById('res-score').innerText = data.score + ' / 5';
+                document.getElementById('res-conflict').innerText = data.conflict;
+                document.getElementById('res-transcript').innerText = data.transcript_fragment;
+
                 anim.style.display = 'none';
                 result.style.display = 'block';
                 result.scrollIntoView({ behavior: 'smooth' });
-            }, 3500);
+            } catch (e) {
+                alert("Ошибка обработки файла бэкендом.");
+                uploadZone.style.display = 'block';
+                anim.style.display = 'none';
+            }
         }
     </script>
 </body>

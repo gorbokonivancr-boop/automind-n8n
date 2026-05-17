@@ -1,0 +1,9 @@
+services:
+  automind-demo:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    volumes:
+      - ./demos:/app/demos

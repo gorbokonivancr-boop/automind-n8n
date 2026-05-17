@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoMind: Демо-стенд экспертности</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --text: #1e293b;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 40px 20px;
+        }
+        .container { max-width: 900px; margin: 0 auto; }
+        header { text-align: center; margin-bottom: 50px; }
+        h1 { font-size: 2.5rem; margin-bottom: 10px; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+        }
+        .demo-card {
+            background: var(--card);
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+            text-decoration: none;
+            color: inherit;
+            transition: transform 0.2s, box-shadow 0.2s;
+            display: flex;
+            flex-direction: column;
+        }
+        .demo-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+        }
+        .icon { font-size: 2.5rem; margin-bottom: 20px; }
+        .title { font-size: 1.25rem; font-weight: bold; margin-bottom: 10px; }
+        .desc { font-size: 0.95rem; color: #64748b; line-height: 1.5; flex-grow: 1; }
+        .tag {
+            display: inline-block;
+            margin-top: 15px;
+            font-size: 0.75rem;
+            font-weight: bold;
+            padding: 4px 8px;
+            background: #dbeafe;
+            color: var(--primary);
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>AutoMind Demo Center</h1>
+            <p style="font-size: 1.2rem; color: #64748b;">Выберите сценарий для демонстрации экспертности</p>
+        </header>
+
+        <div class="grid">
+            <a href="/demos/reputation_shield/index.html" class="demo-card">
+                <div class="icon">🛡️</div>
+                <div class="title">Репутационный щит</div>
+                <div class="desc">LIVE-анализ отзывов, генерация ответов через AI и мгновенные уведомления о негативе.</div>
+                <div class="tag">AI AGENTS</div>
+            </a>
+
+            <a href="/demos/price_radar/index.html" class="demo-card">
+                <div class="icon">📡</div>
+                <div class="title">Радар цен конкурентов</div>
+                <div class="desc">Интерактивный мониторинг рынка. Отслеживание демпинга и динамики цен конкурентов.</div>
+                <div class="tag">WEB SCRAPING</div>
+            </a>
+
+            <a href="/demos/call_summarizer/index.html" class="demo-card">
+                <div class="icon">📞</div>
+                <div class="title">Суммаризатор звонков</div>
+                <div class="desc">Автоматическая расшифровка (Whisper) и оценка работы персонала (GPT-4o).</div>
+                <div class="tag">SPEECH-TO-TEXT</div>
+            </a>
+
+            <a href="/demos/beauty_crm/setup_guide.md" class="demo-card">
+                <div class="icon">📊</div>
+                <div class="title">Beauty Hub CRM</div>
+                <div class="desc">Автоматизация Google Таблиц: расчет LTV, сегментация базы и триггерные рассылки.</div>
+                <div class="tag">GOOGLE APPS SCRIPT</div>
+            </a>
+
+            <a href="/demos/knowledge_base/index.md" class="demo-card">
+                <div class="icon">📚</div>
+                <div class="title">База знаний (Wiki)</div>
+                <div class="desc">Единый центр стандартов и скриптов в Notion для быстрого онбординга персонала.</div>
+                <div class="tag">NOTION TEMPLATE</div>
+            </a>
+        </div>
+
+        <footer style="margin-top: 60px; text-align: center; color: #94a3b8; font-size: 0.85rem;">
+            © 2024 AutoMind AI System · Эффективность за рамками кода
+        </footer>
+    </div>
+</body>
+</html>
